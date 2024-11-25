@@ -100,11 +100,11 @@ const BACKGROUND_QUAD: &[BasicVertex] = &[
     },
     BasicVertex {
         position: [1.0, 1.0, 0.0],
-        tex_coords: [1.0, 0.0],
+        tex_coords: [0.8, 0.0],
     },
     BasicVertex {
         position: [1.0, -1.0, 0.0],
-        tex_coords: [1.0, 1.0],
+        tex_coords: [0.8, 1.0],
     },
     BasicVertex {
         position: [-1.0, -1.0, 0.0],
@@ -112,6 +112,26 @@ const BACKGROUND_QUAD: &[BasicVertex] = &[
     },
 ];
 const BACKGROUND_QUAD_INDICES: &[u16] = &[0, 1, 2, 0, 2, 3];
+
+const WHITE_PAWN_QUAD: &[BasicVertex] = &[
+    BasicVertex {
+        position: [-1.0, 1.0, 0.0],
+        tex_coords: [0.8, 0.0],
+    },
+    BasicVertex {
+        position: [-1.0 + 0.25, 1.0, 0.0],
+        tex_coords: [0.925, 0.0],
+    },
+    BasicVertex {
+        position: [-1.0 + 0.25, 1.0 - 0.25, 0.0],
+        tex_coords: [0.925, 0.125],
+    },
+    BasicVertex {
+        position: [-1.0, 1.0 - 0.25, 0.0],
+        tex_coords: [0.8, 0.125],
+    },
+];
+
 #[derive(Default)]
 struct App {
     window: Option<Arc<Window>>,
@@ -129,30 +149,33 @@ struct App {
     camera_buffer: Option<wgpu::Buffer>,
     camera_bind_group: Option<wgpu::BindGroup>,
 
-    // background texture
-    background_render_pipeline: Option<wgpu::RenderPipeline>,
-    background_texture_bind_group: Option<wgpu::BindGroup>,
-    background_vertex_buffer: Option<wgpu::Buffer>,
-    background_index_buffer: Option<wgpu::Buffer>,
+    // main texture
+    main_texture_render_pipeline: Option<wgpu::RenderPipeline>,
+    main_texture_bind_group: Option<wgpu::BindGroup>,
+    board_vertex_buffer: Option<wgpu::Buffer>,
+    board_index_buffer: Option<wgpu::Buffer>,
+
+    white_pawn_vertex_buffer: Option<wgpu::Buffer>,
+    white_pawn_index_buffer: Option<wgpu::Buffer>,
 
     // cube
-    cube_pipeline: Option<wgpu::RenderPipeline>,
-    cube_bind_group: Option<wgpu::BindGroup>,
-    cube_vertex_buf: Option<wgpu::Buffer>,
-    cube_index_buf: Option<wgpu::Buffer>,
-    cube_instances: Vec<Instance>,
-    cube_instance_buffer: Option<wgpu::Buffer>,
-    cube_model: Option<cube::Cube>,
+    // cube_pipeline: Option<wgpu::RenderPipeline>,
+    // cube_bind_group: Option<wgpu::BindGroup>,
+    // cube_vertex_buf: Option<wgpu::Buffer>,
+    // cube_index_buf: Option<wgpu::Buffer>,
+    // cube_instances: Vec<Instance>,
+    // cube_instance_buffer: Option<wgpu::Buffer>,
+    // cube_model: Option<cube::Cube>,
 
     // player
-    cube_position: Option<cgmath::Vector3<f32>>,
+    // cube_position: Option<cgmath::Vector3<f32>>,
 
     // controller
     controller: controller::Controller,
 }
 
-const WIDTH: u32 = 1024;
-const HEIGHT: u32 = 768;
+const WIDTH: u32 = 512;
+const HEIGHT: u32 = 512;
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
@@ -349,20 +372,20 @@ impl ApplicationHandler for App {
                     label: Some("background texture bind group layout"),
                 },
             );
-        let background_render_pipeline_layout = self
-            .device
-            .as_ref()
-            .unwrap()
-            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("cube pipeline layout"),
-                bind_group_layouts: &[background_texture_bind_group_layout],
-                push_constant_ranges: &[],
-            });
-        self.background_render_pipeline =
+        let main_texture_pipeline_layout =
+            self.device
+                .as_ref()
+                .unwrap()
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("cube pipeline layout"),
+                    bind_group_layouts: &[background_texture_bind_group_layout],
+                    push_constant_ranges: &[],
+                });
+        self.main_texture_render_pipeline =
             Some(self.device.as_ref().unwrap().create_render_pipeline(
                 &wgpu::RenderPipelineDescriptor {
                     label: Some("background render pipeline"),
-                    layout: Some(&background_render_pipeline_layout),
+                    layout: Some(&main_texture_pipeline_layout),
                     vertex: wgpu::VertexState {
                         module: &basic_shader,
                         entry_point: Some("vs_main"),
@@ -374,7 +397,7 @@ impl ApplicationHandler for App {
                         entry_point: Some("fs_main"),
                         targets: &[Some(wgpu::ColorTargetState {
                             format: texture_format,
-                            blend: Some(wgpu::BlendState::REPLACE),
+                            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                             write_mask: wgpu::ColorWrites::ALL,
                         })],
                         compilation_options: wgpu::PipelineCompilationOptions::default(),
@@ -398,14 +421,14 @@ impl ApplicationHandler for App {
                     cache: None,
                 },
             ));
-        self.background_vertex_buffer = Some(self.device.as_ref().unwrap().create_buffer_init(
+        self.board_vertex_buffer = Some(self.device.as_ref().unwrap().create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
                 label: Some("background vertex buffer"),
                 contents: bytemuck::cast_slice(BACKGROUND_QUAD.to_vec().as_slice()),
                 usage: wgpu::BufferUsages::VERTEX,
             },
         ));
-        self.background_index_buffer = Some(self.device.as_ref().unwrap().create_buffer_init(
+        self.board_index_buffer = Some(self.device.as_ref().unwrap().create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
                 label: Some("background index buffer"),
                 contents: bytemuck::cast_slice(BACKGROUND_QUAD_INDICES),
@@ -413,104 +436,115 @@ impl ApplicationHandler for App {
             },
         ));
 
-        let background_diffuse_bytes = include_bytes!("../res/ChessZip/Boards/Board.png");
-        let background_diffuse_texture = texture::Texture::from_bytes(
+        self.white_pawn_vertex_buffer = Some(self.device.as_ref().unwrap().create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("white pawn"),
+                contents: bytemuck::cast_slice(WHITE_PAWN_QUAD.to_vec().as_slice()),
+                usage: wgpu::BufferUsages::VERTEX,
+            },
+        ));
+        self.white_pawn_index_buffer = Some(self.device.as_ref().unwrap().create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("white pawn index buffer"),
+                contents: bytemuck::cast_slice(BACKGROUND_QUAD_INDICES),
+                usage: wgpu::BufferUsages::INDEX,
+            },
+        ));
+
+        let main_texture_diffuse_bytes = include_bytes!("../res/texture.png");
+        let main_texture = texture::Texture::from_bytes(
             &self.device.as_ref().unwrap(),
             &self.queue.as_ref().unwrap(),
-            background_diffuse_bytes,
+            main_texture_diffuse_bytes,
             "background image",
             false,
         )
         .unwrap();
-        self.background_texture_bind_group = Some(self.device.as_ref().unwrap().create_bind_group(
+        self.main_texture_bind_group = Some(self.device.as_ref().unwrap().create_bind_group(
             &wgpu::BindGroupDescriptor {
                 layout: &background_texture_bind_group_layout,
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
-                        resource: wgpu::BindingResource::TextureView(
-                            &background_diffuse_texture.view,
-                        ),
+                        resource: wgpu::BindingResource::TextureView(&main_texture.view),
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::Sampler(
-                            &background_diffuse_texture.sampler,
-                        ),
+                        resource: wgpu::BindingResource::Sampler(&main_texture.sampler),
                     },
                 ],
                 label: Some("backgroundd texture bind group"),
             },
         ));
 
-        self.cube_pipeline = Some(self.device.as_ref().unwrap().create_render_pipeline(
-            &wgpu::RenderPipelineDescriptor {
-                label: Some("cube render pipeline"),
-                layout: Some(&cube_render_pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &cube_shader,
-                    entry_point: Some("vs_main"),
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    buffers: &[vertex::ModelVertex::desc(), InstanceRaw::desc()],
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &basic_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: texture_format,
-                        blend: Some(wgpu::BlendState::REPLACE),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    strip_index_format: None,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: Some(wgpu::Face::Back),
-                    polygon_mode: wgpu::PolygonMode::Fill,
-                    unclipped_depth: false,
-                    conservative: false,
-                },
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState {
-                    count: 1,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                multiview: None,
-                cache: None,
-            },
-        ));
+        // self.cube_pipeline = Some(self.device.as_ref().unwrap().create_render_pipeline(
+        //     &wgpu::RenderPipelineDescriptor {
+        //         label: Some("cube render pipeline"),
+        //         layout: Some(&cube_render_pipeline_layout),
+        //         vertex: wgpu::VertexState {
+        //             module: &cube_shader,
+        //             entry_point: Some("vs_main"),
+        //             compilation_options: wgpu::PipelineCompilationOptions::default(),
+        //             buffers: &[vertex::ModelVertex::desc(), InstanceRaw::desc()],
+        //         },
+        //         fragment: Some(wgpu::FragmentState {
+        //             module: &basic_shader,
+        //             entry_point: Some("fs_main"),
+        //             targets: &[Some(wgpu::ColorTargetState {
+        //                 format: texture_format,
+        //                 blend: Some(wgpu::BlendState::REPLACE),
+        //                 write_mask: wgpu::ColorWrites::ALL,
+        //             })],
+        //             compilation_options: wgpu::PipelineCompilationOptions::default(),
+        //         }),
+        //         primitive: wgpu::PrimitiveState {
+        //             topology: wgpu::PrimitiveTopology::TriangleList,
+        //             strip_index_format: None,
+        //             front_face: wgpu::FrontFace::Ccw,
+        //             cull_mode: Some(wgpu::Face::Back),
+        //             polygon_mode: wgpu::PolygonMode::Fill,
+        //             unclipped_depth: false,
+        //             conservative: false,
+        //         },
+        //         depth_stencil: None,
+        //         multisample: wgpu::MultisampleState {
+        //             count: 1,
+        //             mask: !0,
+        //             alpha_to_coverage_enabled: false,
+        //         },
+        //         multiview: None,
+        //         cache: None,
+        //     },
+        // ));
 
-        self.cube_model = Some(
-            cube::load_cube(
-                "cube.obj",
-                &self.device.as_ref().unwrap(),
-                &self.queue.as_ref().unwrap(),
-                cube_bind_group_layout,
-            )
-            .unwrap(),
-        );
+        // self.cube_model = Some(
+        //     cube::load_cube(
+        //         "cube.obj",
+        //         &self.device.as_ref().unwrap(),
+        //         &self.queue.as_ref().unwrap(),
+        //         cube_bind_group_layout,
+        //     )
+        //     .unwrap(),
+        // );
 
-        self.cube_position = Some(cgmath::Vector3 {
-            x: -1.0,
-            y: -1.0,
-            z: -1.0,
-        });
+        // self.cube_position = Some(cgmath::Vector3 {
+        //     x: -1.0,
+        //     y: -1.0,
+        //     z: -1.0,
+        // });
 
         use cgmath::prelude::*;
         const SPACE_BETWEEN: f32 = 3.0;
         const NUM_INSTANCES_PER_ROW: i32 = 5;
 
-        self.cube_instances = vec![Instance {
-            position: self.cube_position.unwrap(),
-            rotation: cgmath::Quaternion::zero(),
-            // cgmath::Quaternion::from_axis_angle(
-            //     (16.6,50.0,-16.6).into(),
-            // cgmath::Deg(45.0)
-            // ),
-        }];
+        // self.cube_instances = vec![Instance {
+        //     position: self.cube_position.unwrap(),
+        //     rotation: cgmath::Quaternion::zero(),
+        //     // cgmath::Quaternion::from_axis_angle(
+        //     //     (16.6,50.0,-16.6).into(),
+        //     // cgmath::Deg(45.0)
+        //     // ),
+        // }];
 
         // self.cube_instances = (0..NUM_INSTANCES_PER_ROW)
         //     .flat_map(|y| {
@@ -538,19 +572,19 @@ impl ApplicationHandler for App {
         //     })
         //     .collect::<Vec<_>>();
 
-        let instance_data = self
-            .cube_instances
-            .iter()
-            .map(Instance::to_raw)
-            .collect::<Vec<_>>();
+        //         let instance_data = self
+        //             .cube_instances
+        //             .iter()
+        //             .map(Instance::to_raw)
+        //             .collect::<Vec<_>>();
 
-        self.cube_instance_buffer = Some(self.device.as_ref().unwrap().create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("cube instance buffer"),
-                contents: bytemuck::cast_slice(&instance_data),
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            },
-        ));
+        //         self.cube_instance_buffer = Some(self.device.as_ref().unwrap().create_buffer_init(
+        //             &wgpu::util::BufferInitDescriptor {
+        //                 label: Some("cube instance buffer"),
+        //                 contents: bytemuck::cast_slice(&instance_data),
+        //                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        //             },
+        // ));
 
         // initial redraw request
         self.window.as_ref().unwrap().request_redraw();
@@ -582,7 +616,7 @@ impl ApplicationHandler for App {
                         ..
                     },
                 ..
-            } => self.add_cube(),
+            } => {} //self.add_cube(),
 
             WindowEvent::RedrawRequested => {
                 self.update();
@@ -624,23 +658,30 @@ impl ApplicationHandler for App {
                     });
 
                     //////
-                    // draw background
-                    render_pass.set_pipeline(&self.background_render_pipeline.as_ref().unwrap());
-                    render_pass.set_bind_group(0, &self.background_texture_bind_group, &[]);
+                    // draw board
+                    render_pass.set_pipeline(&self.main_texture_render_pipeline.as_ref().unwrap());
+                    render_pass.set_bind_group(0, &self.main_texture_bind_group, &[]);
                     render_pass.set_bind_group(1, self.camera_bind_group.as_ref().unwrap(), &[]);
+                    render_pass
+                        .set_vertex_buffer(0, self.board_vertex_buffer.as_ref().unwrap().slice(..));
+                    render_pass.set_index_buffer(
+                        self.board_index_buffer.as_ref().unwrap().slice(..),
+                        wgpu::IndexFormat::Uint16,
+                    );
+                    render_pass.draw_indexed(0..BACKGROUND_QUAD_INDICES.len() as u32, 0, 0..1);
+
+                    //// draw pawn
+                    // render_pass.set_bind_group(0, &self.main_texture_bind_group, offsets);
+                    // render_pass.set
                     render_pass.set_vertex_buffer(
                         0,
-                        self.background_vertex_buffer.as_ref().unwrap().slice(..),
-                    );
-                    render_pass.set_index_buffer(
-                        self.background_index_buffer.as_ref().unwrap().slice(..),
-                        wgpu::IndexFormat::Uint16,
+                        self.white_pawn_vertex_buffer.as_ref().unwrap().slice(..),
                     );
                     render_pass.draw_indexed(0..BACKGROUND_QUAD_INDICES.len() as u32, 0, 0..1);
 
                     ///////
                     // cube
-                    render_pass.set_pipeline(&self.cube_pipeline.as_ref().unwrap());
+                    // render_pass.set_pipeline(&self.cube_pipeline.as_ref().unwrap());
                     // render_pass.set_vertex_buffer(
                     //     0,
                     //     self.cube_model.as_ref().unwrap().meshes[0]
@@ -657,19 +698,19 @@ impl ApplicationHandler for App {
                     // );
                     // render_pass.draw_indexed(0..8, 0, 0..1);
                     // /////////////
-                    render_pass.set_vertex_buffer(
-                        1,
-                        self.cube_instance_buffer.as_ref().unwrap().slice(..),
-                    );
-                    let mesh = &self.cube_model.as_ref().unwrap().meshes[0];
-                    let material = &self.cube_model.as_ref().unwrap().materials[0];
-                    render_pass.set_bind_group(0, &material.bind_group, &[]);
-                    render_pass.draw_mesh_instanced(
-                        mesh,
-                        material,
-                        0..self.cube_instances.len() as u32,
-                        self.camera_bind_group.as_ref().unwrap(),
-                    );
+                    // render_pass.set_vertex_buffer(
+                    //     1,
+                    //     self.cube_instance_buffer.as_ref().unwrap().slice(..),
+                    // );
+                    // let mesh = &self.cube_model.as_ref().unwrap().meshes[0];
+                    // let material = &self.cube_model.as_ref().unwrap().materials[0];
+                    // render_pass.set_bind_group(0, &material.bind_group, &[]);
+                    // render_pass.draw_mesh_instanced(
+                    //     mesh,
+                    //     material,
+                    //     0..self.cube_instances.len() as u32,
+                    //     self.camera_bind_group.as_ref().unwrap(),
+                    // );
                 }
 
                 // submit will accept anything that implements IntoIter
@@ -708,24 +749,24 @@ impl App {
         }
         move_vector *= self.controller.velocity;
 
-        for c in self.cube_instances.iter_mut() {
-            c.position += move_vector;
-        }
+        // for c in self.cube_instances.iter_mut() {
+        //     c.position += move_vector;
+        // }
         // self.cube_instances[0].position += move_vector;
 
-        // Map the instance data to `InstanceRaw` format
-        let instance_data = self
-            .cube_instances
-            .iter()
-            .map(Instance::to_raw)
-            .collect::<Vec<_>>();
+        // // Map the instance data to `InstanceRaw` format
+        // let instance_data = self
+        //     .cube_instances
+        //     .iter()
+        //     .map(Instance::to_raw)
+        //     .collect::<Vec<_>>();
 
         // Re-upload the updated instance data to the GPU
-        self.queue.as_ref().unwrap().write_buffer(
-            self.cube_instance_buffer.as_ref().unwrap(),
-            0,
-            bytemuck::cast_slice(&instance_data),
-        );
+        // self.queue.as_ref().unwrap().write_buffer(
+        //     self.cube_instance_buffer.as_ref().unwrap(),
+        //     0,
+        //     bytemuck::cast_slice(&instance_data),
+        // );
 
         match self.timer.as_mut() {
             Some(timer) => {
@@ -745,45 +786,45 @@ impl App {
         };
     }
 
-    fn add_cube(&mut self) {
-        let x: f32 = rand::random::<f32>() * 10.0;
-        let y: f32 = rand::random::<f32>() * 10.0;
-        let z: f32 = rand::random::<f32>() * 10.0;
-        let position = (x, y, z).into();
+    // fn add_cube(&mut self) {
+    //     let x: f32 = rand::random::<f32>() * 10.0;
+    //     let y: f32 = rand::random::<f32>() * 10.0;
+    //     let z: f32 = rand::random::<f32>() * 10.0;
+    //     let position = (x, y, z).into();
 
-        self.cube_instances.push(Instance {
-            position,
-            rotation: cgmath::Quaternion::zero(),
-        });
+    //     self.cube_instances.push(Instance {
+    //         position,
+    //         rotation: cgmath::Quaternion::zero(),
+    //     });
 
-        let instance_data = self
-            .cube_instances
-            .iter()
-            .map(Instance::to_raw)
-            .collect::<Vec<_>>();
+    //     let instance_data = self
+    //         .cube_instances
+    //         .iter()
+    //         .map(Instance::to_raw)
+    //         .collect::<Vec<_>>();
 
-        self.cube_instance_buffer = Some(self.device.as_ref().unwrap().create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("cube instance buffer"),
-                contents: bytemuck::cast_slice(&instance_data),
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            },
-        ));
+    //     self.cube_instance_buffer = Some(self.device.as_ref().unwrap().create_buffer_init(
+    //         &wgpu::util::BufferInitDescriptor {
+    //             label: Some("cube instance buffer"),
+    //             contents: bytemuck::cast_slice(&instance_data),
+    //             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+    //         },
+    //     ));
 
-        // // Map the instance data to `InstanceRaw` format
-        // let instance_data = self
-        //     .cube_instances
-        //     .iter()
-        //     .map(Instance::to_raw)
-        //     .collect::<Vec<_>>();
+    //     // // Map the instance data to `InstanceRaw` format
+    //     // let instance_data = self
+    //     //     .cube_instances
+    //     //     .iter()
+    //     //     .map(Instance::to_raw)
+    //     //     .collect::<Vec<_>>();
 
-        // // Re-upload the updated instance data to the GPU
-        self.queue.as_ref().unwrap().write_buffer(
-            self.cube_instance_buffer.as_ref().unwrap(),
-            0,
-            bytemuck::cast_slice(&instance_data),
-        );
-    }
+    //     // // Re-upload the updated instance data to the GPU
+    //     self.queue.as_ref().unwrap().write_buffer(
+    //         self.cube_instance_buffer.as_ref().unwrap(),
+    //         0,
+    //         bytemuck::cast_slice(&instance_data),
+    //     );
+    // }
 
     fn set_camera(&mut self, camera: Camera) {
         let mut camera_uniform = CameraUniform::new();
